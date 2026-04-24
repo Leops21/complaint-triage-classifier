@@ -2,7 +2,7 @@
 data/raw/*
 !data/raw/.gitkeep
 !data/raw/README.md
-!data/raw/complaints_50.csv
+!data/raw/complaints.csv
 
 # Generated data
 data/interim/*

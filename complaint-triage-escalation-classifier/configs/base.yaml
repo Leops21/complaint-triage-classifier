@@ -1,0 +1,30 @@
+project:
+  name: customer_complaint_triage_escalation_classifier
+  random_seed: 42
+
+paths:
+  raw_csv: data/raw/complaints.csv
+  clean_csv: data/interim/complaints_clean.csv
+  bootstrap_labels_csv: data/labeled/bootstrap_labels.csv
+  verified_labels_csv: data/labeled/verified_labels.csv
+  processed_dir: data/processed
+  reports_dir: reports
+  models_dir: models
+
+data:
+  text_column: clean_text
+  id_column: Complaint ID
+  raw_text_column: Consumer complaint narrative
+  min_text_chars: 40
+  max_rows: null
+
+splits:
+  test_size: 0.15
+  val_size: 0.15
+  random_seed: 42
+
+training:
+  metric_for_best_model: f1_macro
+  greater_is_better: true
+  early_stopping_patience: 2
+  use_class_weights: true

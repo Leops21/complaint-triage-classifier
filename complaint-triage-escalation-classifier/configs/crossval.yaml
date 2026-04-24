@@ -1,0 +1,5 @@
+cross_validation:
+  folds: 3
+  random_seed: 42
+  backend: baseline
+  metric: f1_macro

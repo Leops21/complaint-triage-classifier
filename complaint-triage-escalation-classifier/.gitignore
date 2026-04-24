@@ -1,31 +1,22 @@
+# Large/full raw datasets should stay out of Git
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/README.md
+!data/raw/complaints_50.csv
+
+# Generated data
+data/interim/*
+data/processed/*
+
+# Models/checkpoints
+models/*
+checkpoints/*
+outputs/*
+wandb/
+mlruns/
+
 # Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Environments
+*.pyc
 .venv/
-venv/
-env/
 .env
-
-# Data and model artifacts
-data/raw/*.csv
-data/interim/*.csv
-data/labeled/*.csv
-data/processed/*.csv
-models/
-reports/**/*.csv
-reports/**/*.json
-reports/**/*.png
-reports/**/*.parquet
-
-# OS / IDE
-.DS_Store
-.vscode/
-.idea/

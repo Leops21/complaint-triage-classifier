@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -20,6 +21,14 @@ from complaint_triage.modeling.metrics import (
     make_classification_report,
     threshold_sweep,
 )
+
+
+def _trainer_processor_kwargs(tokenizer) -> dict:
+    """Return the tokenizer/processor keyword supported by the installed Transformers version."""
+    parameters = inspect.signature(Trainer.__init__).parameters
+    if "processing_class" in parameters:
+        return {"processing_class": tokenizer}
+    return {"tokenizer": tokenizer}
 
 
 def _load_label_maps(model_dir: str | Path, task: str) -> tuple[dict[str, int], dict[int, str]]:
@@ -67,7 +76,7 @@ def evaluate_transformer(
 
     trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
+        **_trainer_processor_kwargs(tokenizer),
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
     )
     predictions = trainer.predict(tokenized)

@@ -10,6 +10,9 @@ training:
   weight_decay: 0.01
   warmup_ratio: 0.06
   gradient_accumulation_steps: 1
+  force_cpu: false
+  dataloader_num_workers: 0
+  gradient_checkpointing: false
   fp16: true
   logging_steps: 50
   save_total_limit: 2

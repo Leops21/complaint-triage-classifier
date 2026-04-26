@@ -27,6 +27,14 @@ from complaint_triage.utils.config import load_yaml
 from complaint_triage.utils.seed import set_seed
 
 
+def _trainer_processor_kwargs(tokenizer: Any) -> dict[str, Any]:
+    """Return the tokenizer/processor keyword supported by the installed Transformers version."""
+    parameters = inspect.signature(Trainer.__init__).parameters
+    if "processing_class" in parameters:
+        return {"processing_class": tokenizer}
+    return {"tokenizer": tokenizer}
+
+
 class WeightedLossTrainer(Trainer):
     """Trainer with optional class-weighted cross entropy."""
 
@@ -157,7 +165,7 @@ def train_transformer(
         args=_training_args(output_path, training_cfg),
         train_dataset=tokenized_train,
         eval_dataset=tokenized_val,
-        tokenizer=tokenizer,
+        **_trainer_processor_kwargs(tokenizer),
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
         callbacks=callbacks,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -24,15 +25,11 @@ from complaint_triage.constants import TASK_TO_LABEL_COLUMN, TASK_TO_LABELS
 from complaint_triage.modeling.datasets import dataframe_to_dataset, get_label_maps, tokenize_dataset
 from complaint_triage.modeling.metrics import compute_basic_metrics
 from complaint_triage.utils.config import load_yaml
+from complaint_triage.utils.device import get_torch_device_summary
 from complaint_triage.utils.seed import set_seed
 
 
-def _trainer_processor_kwargs(tokenizer: Any) -> dict[str, Any]:
-    """Return the tokenizer/processor keyword supported by the installed Transformers version."""
-    parameters = inspect.signature(Trainer.__init__).parameters
-    if "processing_class" in parameters:
-        return {"processing_class": tokenizer}
-    return {"tokenizer": tokenizer}
+LOGGER = logging.getLogger(__name__)
 
 
 class WeightedLossTrainer(Trainer):
@@ -57,10 +54,25 @@ class WeightedLossTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
+def _trainer_tokenizer_kwargs(tokenizer) -> dict[str, Any]:
+    """Pass the tokenizer/processor using the argument supported by this Transformers version."""
+    signature = inspect.signature(Trainer.__init__)
+    parameters = signature.parameters
+
+    if "processing_class" in parameters:
+        return {"processing_class": tokenizer}
+    if "tokenizer" in parameters:
+        return {"tokenizer": tokenizer}
+    return {}
+
+
 def _training_args(output_dir: str | Path, training_cfg: dict[str, Any]) -> TrainingArguments:
     """Build TrainingArguments while supporting minor Transformers API changes."""
     signature = inspect.signature(TrainingArguments.__init__)
     parameters = signature.parameters
+
+    force_cpu = bool(training_cfg.get("force_cpu", False))
+    cuda_enabled = torch.cuda.is_available() and not force_cpu
 
     args: dict[str, Any] = {
         "output_dir": str(output_dir),
@@ -89,8 +101,23 @@ def _training_args(output_dir: str | Path, training_cfg: dict[str, Any]) -> Trai
     if "save_strategy" in parameters:
         args["save_strategy"] = "epoch"
 
+    # Newer Transformers uses use_cpu; older versions use no_cuda.
+    if "use_cpu" in parameters:
+        args["use_cpu"] = force_cpu
+    elif "no_cuda" in parameters:
+        args["no_cuda"] = force_cpu
+
     if "fp16" in parameters:
-        args["fp16"] = bool(training_cfg.get("fp16", False)) and torch.cuda.is_available()
+        args["fp16"] = bool(training_cfg.get("fp16", False)) and cuda_enabled
+
+    if "dataloader_pin_memory" in parameters:
+        args["dataloader_pin_memory"] = cuda_enabled
+
+    if "dataloader_num_workers" in parameters:
+        args["dataloader_num_workers"] = int(training_cfg.get("dataloader_num_workers", 0))
+
+    if "gradient_checkpointing" in parameters:
+        args["gradient_checkpointing"] = bool(training_cfg.get("gradient_checkpointing", False))
 
     return TrainingArguments(**args)
 
@@ -120,6 +147,14 @@ def train_transformer(
     model_cfg = config.get("model", {})
     training_cfg = config.get("training", {})
     training_cfg["seed"] = seed
+
+    device_summary = get_torch_device_summary(force_cpu=bool(training_cfg.get("force_cpu", False)))
+    LOGGER.info("PyTorch device summary: %s", json.dumps(device_summary, indent=2))
+    if device_summary["selected_device"] == "cpu":
+        LOGGER.warning(
+            "Training is running on CPU. If you expected GPU training, install a CUDA-enabled "
+            "PyTorch build and verify with: python scripts/10_check_gpu.py"
+        )
 
     model_name = model_cfg.get("name_or_path", "distilbert-base-uncased")
     max_length = int(model_cfg.get("max_length", 256))
@@ -165,13 +200,14 @@ def train_transformer(
         args=_training_args(output_path, training_cfg),
         train_dataset=tokenized_train,
         eval_dataset=tokenized_val,
-        **_trainer_processor_kwargs(tokenizer),
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
         callbacks=callbacks,
         class_weights=class_weights,
+        **_trainer_tokenizer_kwargs(tokenizer),
     )
 
+    LOGGER.info("Hugging Face Trainer device: %s", trainer.args.device)
     trainer.train()
     metrics = trainer.evaluate()
 

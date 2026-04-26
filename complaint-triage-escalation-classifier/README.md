@@ -399,3 +399,14 @@ The project uses public CFPB complaint narratives that consumers opted to publis
 - CFPB data-use and narrative publication details: https://www.consumerfinance.gov/complaint/data-use/
 - Hugging Face text classification task guide: https://huggingface.co/docs/transformers/en/tasks/sequence_classification
 - Hugging Face fine-tuning guide: https://huggingface.co/docs/transformers/en/training
+
+## GPU setup
+
+Transformer training uses Hugging Face `Trainer`, which can use CUDA automatically when a CUDA-enabled PyTorch build is installed. Before running DistilBERT or RoBERTa, verify GPU access:
+
+```powershell
+python scripts/10_check_gpu.py
+```
+
+If the script reports `cuda_available: false` on a machine with an NVIDIA GPU, reinstall PyTorch with a CUDA wheel. See `docs/gpu_setup.md` for the full Windows setup.
+

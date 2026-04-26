@@ -23,12 +23,16 @@ from complaint_triage.modeling.metrics import (
 )
 
 
-def _trainer_processor_kwargs(tokenizer) -> dict:
-    """Return the tokenizer/processor keyword supported by the installed Transformers version."""
-    parameters = inspect.signature(Trainer.__init__).parameters
+def _trainer_tokenizer_kwargs(tokenizer) -> dict:
+    """Pass the tokenizer/processor using the argument supported by this Transformers version."""
+    signature = inspect.signature(Trainer.__init__)
+    parameters = signature.parameters
+
     if "processing_class" in parameters:
         return {"processing_class": tokenizer}
-    return {"tokenizer": tokenizer}
+    if "tokenizer" in parameters:
+        return {"tokenizer": tokenizer}
+    return {}
 
 
 def _load_label_maps(model_dir: str | Path, task: str) -> tuple[dict[str, int], dict[int, str]]:
@@ -76,8 +80,8 @@ def evaluate_transformer(
 
     trainer = Trainer(
         model=model,
-        **_trainer_processor_kwargs(tokenizer),
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
+        **_trainer_tokenizer_kwargs(tokenizer),
     )
     predictions = trainer.predict(tokenized)
     logits = predictions.predictions

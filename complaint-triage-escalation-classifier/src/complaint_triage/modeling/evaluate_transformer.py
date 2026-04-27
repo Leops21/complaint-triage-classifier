@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.special import softmax
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, DataCollatorWithPadding, Trainer
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Trainer,
+    TrainingArguments,
+)
 
 from complaint_triage.analysis.plots import plot_confusion_matrix, plot_pr_curve, plot_roc_curve
 from complaint_triage.constants import TASK_TO_LABEL_COLUMN, TASK_TO_LABELS
@@ -41,6 +47,7 @@ def _load_label_maps(model_dir: str | Path, task: str) -> tuple[dict[str, int], 
     if path.exists():
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
+
         label2id = {str(k): int(v) for k, v in data["label2id"].items()}
         id2label = {int(k): str(v) for k, v in data["id2label"].items()}
         return label2id, id2label
@@ -49,6 +56,18 @@ def _load_label_maps(model_dir: str | Path, task: str) -> tuple[dict[str, int], 
     label2id = {label: idx for idx, label in enumerate(labels)}
     id2label = {idx: label for label, idx in label2id.items()}
     return label2id, id2label
+
+
+def _load_model_safely(model_path: Path) -> AutoModelForSequenceClassification:
+    """Load a saved model with a safer attention backend for GPU evaluation."""
+    try:
+        return AutoModelForSequenceClassification.from_pretrained(
+            model_path,
+            attn_implementation="eager",
+        )
+    except TypeError:
+        # Older Transformers versions may not support attn_implementation.
+        return AutoModelForSequenceClassification.from_pretrained(model_path)
 
 
 def evaluate_transformer(
@@ -64,6 +83,7 @@ def evaluate_transformer(
     output_path.mkdir(parents=True, exist_ok=True)
 
     test_df = pd.read_csv(test_path, low_memory=False)
+
     labels = TASK_TO_LABELS[task]
     label_column = TASK_TO_LABEL_COLUMN[task]
     label2id, id2label = _load_label_maps(model_path, task)
@@ -71,18 +91,40 @@ def evaluate_transformer(
     dataset = dataframe_to_dataset(test_df, task=task, text_column=text_column)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForSequenceClassification.from_pretrained(model_path)
+    model = _load_model_safely(model_path)
+
+    # Keep evaluation tokenization aligned with training.
+    # Using RoBERTa's max_position_embeddings directly can create GPU index errors.
+    max_length = 256
 
     def tokenize(batch: dict) -> dict:
-        return tokenizer(batch["text"], truncation=True, max_length=model.config.max_position_embeddings if hasattr(model.config, "max_position_embeddings") else 512)
+        return tokenizer(
+            batch["text"],
+            truncation=True,
+            max_length=max_length,
+        )
 
     tokenized = dataset.map(tokenize, batched=True)
 
+    # Extra safety check: make sure tokenizer and model embeddings match.
+    embedding_size = model.get_input_embeddings().weight.shape[0]
+    if len(tokenizer) != embedding_size:
+        model.resize_token_embeddings(len(tokenizer))
+
+    eval_args = TrainingArguments(
+        output_dir=str(output_path),
+        per_device_eval_batch_size=1,
+        fp16=False,
+        report_to="none",
+    )
+
     trainer = Trainer(
         model=model,
+        args=eval_args,
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         **_trainer_tokenizer_kwargs(tokenizer),
     )
+
     predictions = trainer.predict(tokenized)
     logits = predictions.predictions
     probabilities = softmax(logits, axis=1)
@@ -99,6 +141,7 @@ def evaluate_transformer(
 
     cm_df = confusion_matrix_df(y_true_labels, y_pred_labels, labels=labels)
     cm_df.to_csv(output_path / "confusion_matrix.csv")
+
     plot_confusion_matrix(
         y_true_labels,
         y_pred_labels,
@@ -108,7 +151,9 @@ def evaluate_transformer(
 
     pred_df = test_df.copy()
     pred_df[f"{task}_prediction"] = y_pred_labels
-    pred_df[f"{task}_correct"] = pred_df[label_column].astype(str).eq(pred_df[f"{task}_prediction"])
+    pred_df[f"{task}_correct"] = pred_df[label_column].astype(str).eq(
+        pred_df[f"{task}_prediction"]
+    )
 
     for idx, label in enumerate(labels):
         pred_df[f"prob_{label}"] = probabilities[:, idx]
@@ -126,6 +171,7 @@ def evaluate_transformer(
 
         thresholds = threshold_sweep(true_ids, positive_scores)
         thresholds.to_csv(output_path / "threshold_sweep.csv", index=False)
+
         plot_pr_curve(true_ids, positive_scores, output_path / "pr_curve.png")
         plot_roc_curve(true_ids, positive_scores, output_path / "roc_curve.png")
 
